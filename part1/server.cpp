@@ -11,7 +11,6 @@
 #include <unistd.h>
 #include <vector>
 
-
 using namespace std;
 
 int main()
@@ -54,6 +53,15 @@ int main()
         return -1;
     }
 
+    int p = config["p"].asInt(), k = config["k"].asInt();
+    if (p > k)
+    {
+        cerr << "Value of k should be greater than that of p!" << endl;
+        return -1;
+    }
+
+    string input_file = config["input_file"].asString();
+
     // listen for incoming connections
     cout << "Listening for incoming connections..." << endl;
 
@@ -76,10 +84,6 @@ int main()
         cout << "Connection accepted from " << inet_ntoa(client_address.sin_addr) << ":" << ntohs(client_address.sin_port) << endl;
 
         // start receiving data from the client
-        // int offset;
-        int p = config["p"].asInt(), k = config["k"].asInt();
-
-        string input_file = config["input_file"].asString();
 
         ifstream file(input_file);
         // comma separated words
@@ -117,6 +121,7 @@ int main()
             {
                 // send special packet indicating invalid offset
                 string result = "$$\n";
+                cout << "Sending data: " << result << endl;
                 send(client_socket, result.c_str(), result.size(), 0);
                 continue; // continue to the next iteration waiting for valid requests
             }

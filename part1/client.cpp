@@ -8,25 +8,30 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <map>
 
-int main() {
+using namespace std;
+
+int main()
+{
     // Create a TCP socket
     int client_socket = socket(AF_INET, SOCK_STREAM, 0);
 
-    if (client_socket == -1) {
-        std::cerr << "Failed to create a socket. Exiting..." << std::endl;
+    if (client_socket == -1)
+    {
+        cerr << "Failed to create a socket. Exiting..." << endl;
         return -1;
     }
 
     // Read from config file (config.json)
-    std::ifstream config_file("config.json");
+    ifstream config_file("config.json");
     Json::Value config;
     config_file >> config;
 
     // Extract server IP and port from config
     int server_ip_address = inet_addr(config["server_ip"].asCString());
     int server_port = config["server_port"].asInt();
-    
+
     // Specify the address and port of the server
     struct sockaddr_in server_address;
     server_address.sin_family = AF_INET;
@@ -36,11 +41,14 @@ int main() {
     // Connect to the server
     int connection_status = connect(client_socket, (struct sockaddr *)&server_address, sizeof(server_address));
 
-    if (connection_status == -1) {
-        std::cerr << "Failed to connect to the server. Exiting..." << std::endl;
+    if (connection_status == -1)
+    {
+        cerr << "Failed to connect to the server. Exiting..." << endl;
         return -1;
-    } else {
-        std::cout << "Connected to the server." << std::endl;
+    }
+    else
+    {
+        cout << "Connected to the server." << endl;
     }
 
     // Read k (total words) and p (words per packet) from config
@@ -48,64 +56,98 @@ int main() {
     int p = config["p"].asInt();
 
     int offset = 1;
+    map<string, int> word_count;
 
-    while (true) {
+    string leftover_data = ""; // Buffer for leftover data between packets
+
+    while (true)
+    {
         // Send the offset to the server
         send(client_socket, &offset, sizeof(offset), 0);
+        cout << "------------------Sent offset: " << offset << "-----------------" << endl;
 
         int words_received = 0;
 
-        // Loop to receive packets from the server until k words are received or "EOF" is encountered
+        // Receive packets until k words are received or "EOF" is encountered
         bool eof_received = false;
-        while (words_received < k) {
+        while (words_received < k)
+        {
             char buffer[1024] = {0}; // Adjust size if needed
-            int bytes_received = recv(client_socket, buffer, sizeof(buffer), 0);
+            int bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
 
-            if (bytes_received == -1) {
-                std::cerr << "Failed to receive data from the server." << std::endl;
+            if (bytes_received == -1)
+            {
+                cerr << "Failed to receive data from the server." << endl;
                 break;
             }
 
-            // Convert buffer to string for easy processing
-            std::string data(buffer, bytes_received);
+            // Append received data to leftover data buffer
+            string data = leftover_data + string(buffer, bytes_received);
+            leftover_data = ""; // Reset leftover data after appending
 
-            // Check if the server indicated end of data
-            if (data.find("EOF") != std::string::npos) {
-                std::cout << "Received end of data from server." << std::endl;
-                eof_received = true;
-                break;
-            }
-
-            // Process the received words (assuming comma-separated)
-            std::cout << "Received data: " << data << std::endl;
-            std::vector<std::string> words;
+            // Process complete lines
             size_t pos = 0;
-            std::string token;
-            while ((pos = data.find(",")) != std::string::npos) {
-                token = data.substr(0, pos);
-                if (token != "EOF") {
-                    words.push_back(token);
-                    words_received++;
+            while ((pos = data.find('\n')) != string::npos)
+            {
+                string line = data.substr(0, pos);
+                data.erase(0, pos + 1); // Erase processed line
+
+                // Process words (comma-separated)
+                size_t word_pos = 0;
+                string word;
+                while ((word_pos = line.find(',')) != string::npos)
+                {
+                    word = line.substr(0, word_pos);
+                    if (word == "EOF" || word == "$$")
+                    {
+                        break;
+                    }
+                    if (!word.empty())
+                    {
+                        cout << "Received word : " << word << endl;
+                        words_received++;
+                        word_count[word]++;
+                    }
+                    line.erase(0, word_pos + 1);
                 }
-                data.erase(0, pos + 1);
+
+                // Check if the server indicated end of data
+                if (line.find("EOF") != string::npos)
+                {
+                    eof_received = true;
+                    break;
+                }
+                else if (line.find("$$") != string::npos)
+                {
+                    eof_received = true;
+                    break;
+                }
             }
 
-            if (words_received >= k) {
-                std::cout << "Received " << k << " words from the server." << std::endl;
+            // Store any leftover incomplete line for the next receive cycle
+            leftover_data = data;
+
+            if (words_received >= k || eof_received)
+            {
                 break;
             }
         }
 
-        std::cout << "Completed receiving words. Enter new offset (-1 to exit): ";
-        // std::cin >> offset;
-        offset += k;
-
-        // If the client wants to exit, send a special termination signal (-1)
-        if (eof_received) {
+        if (eof_received)
+        {
+            cout << "Received end of file. Exiting..." << endl;
             offset = -1;
             send(client_socket, &offset, sizeof(offset), 0);
             break;
         }
+
+        offset += k; // Adjust offset for next batch
+    }
+
+    cout << "Word count:" << word_count.size() << endl;
+    for (auto it : word_count)
+    {
+        cout << it.first << ", " << it.second << endl;
     }
 
     // Close the connection
