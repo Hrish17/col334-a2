@@ -1,5 +1,4 @@
 // server side code for socket connection
-
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -65,7 +64,7 @@ int main()
     // listen for incoming connections
     // cout << "Listening for incoming connections..." << endl;
 
-    int listen_status = listen(server_socket, 5);
+    int listen_status = listen(server_socket, 1);
 
     while (true)
     {
@@ -80,13 +79,7 @@ int main()
             return -1;
         }
 
-        // if a connection is accepted, print the client IP and port
-        // cout << "Connection accepted from " << inet_ntoa(client_address.sin_addr) << ":" << ntohs(client_address.sin_port) << endl;
-
-        // start receiving data from the client
-
         ifstream file(input_file);
-        // comma separated words
         vector<string> words;
         words.push_back("dummy");
         string word;
@@ -141,14 +134,13 @@ int main()
                         eof = true;
                         break;
                     }
-                    result += words[offset + words_sent + i] + ",";
+                    result += words[offset + words_sent + i] + "\n";
                 }
 
                 if (eof)
                 {
-                    result += "EOF,";
+                    result += "EOF\n";
                 }
-                result += "\n";
                 // print the result to the console
                 // cout << "Sending data: " << result << endl;
                 send(client_socket, result.c_str(), result.size(), 0);

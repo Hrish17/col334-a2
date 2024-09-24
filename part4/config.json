@@ -1,6 +1,6 @@
 {
     "server_ip": "127.0.0.1",
-    "server_port": 8083,
+    "server_port": 8085,
     "num_clients": 4,
     "k": 5,
     "p": 1,

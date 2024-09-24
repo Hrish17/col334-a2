@@ -1,3 +1,4 @@
+// client side code for socket connection
 #include <iostream>
 #include <fstream>
 #include <json/json.h>
@@ -67,7 +68,6 @@ int main()
     {
         // Send the offset to the server
         send(client_socket, &offset, sizeof(offset), 0);
-        // cout << "------------------Sent offset: " << offset << "-----------------" << endl;
 
         int words_received = 0;
 
@@ -92,38 +92,18 @@ int main()
             size_t pos = 0;
             while ((pos = data.find('\n')) != string::npos)
             {
-                string line = data.substr(0, pos);
+                string word = data.substr(0, pos);
                 data.erase(0, pos + 1); // Erase processed line
 
-                // Process words (comma-separated)
-                size_t word_pos = 0;
-                string word;
-                while ((word_pos = line.find(',')) != string::npos)
-                {
-                    word = line.substr(0, word_pos);
-                    if (word == "EOF" || word == "$$")
-                    {
-                        break;
-                    }
-                    if (!word.empty())
-                    {
-                        // cout << "Received word : " << word << endl;
-                        words_received++;
-                        word_count[word]++;
-                    }
-                    line.erase(0, word_pos + 1);
-                }
-
-                // Check if the server indicated end of data
-                if (line.find("EOF") != string::npos)
+                if (word == "EOF" || word == "$$")
                 {
                     eof_received = true;
                     break;
                 }
-                else if (line.find("$$") != string::npos)
+                if (!word.empty())
                 {
-                    eof_received = true;
-                    break;
+                    words_received++;
+                    word_count[word]++;
                 }
             }
 
@@ -138,7 +118,6 @@ int main()
 
         if (eof_received)
         {
-            // cout << "Received end of file. Exiting..." << endl;
             offset = -1;
             send(client_socket, &offset, sizeof(offset), 0);
             break;
@@ -153,13 +132,6 @@ int main()
     time_file << elapsed_time.count() << endl;
     time_file.close();
 
-    // cout << "Word count:" << word_count.size() << endl;
-    // for (auto it : word_count)
-    // {
-    //     cout << it.first << ", " << it.second << endl;
-    // }
-
-    // Close the connection
     close(client_socket);
     return 0;
 }

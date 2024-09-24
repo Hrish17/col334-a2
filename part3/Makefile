@@ -12,9 +12,17 @@ all: build
 
 build: client server
 
-run:
-	chmod +x run_server_client.sh
-	./run_server_client.sh
+run-aloha:
+	chmod +x run_aloha.sh
+	./run_aloha.sh
+
+run-beb:
+	chmod +x run_beb.sh
+	./run_beb.sh
+
+run-cscd:
+	chmod +x run_cscd.sh
+	./run_cscd.sh
 
 plot:
 	python3 $(PLOT_SCRIPT)
