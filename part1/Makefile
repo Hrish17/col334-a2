@@ -26,6 +26,9 @@ run:
 	chmod +x run_server_client.sh
 	./run_server_client.sh
 
+plot:
+	python3 $(PLOT_SCRIPT)
+
 # Clean the build
 clean:
 	rm -f *.o client server

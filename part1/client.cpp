@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <map>
+#include <chrono>
 
 using namespace std;
 
@@ -43,13 +44,13 @@ int main()
 
     if (connection_status == -1)
     {
-        cerr << "Failed to connect to the server. Exiting..." << endl;
+        // cerr << "Failed to connect to the server. Exiting..." << endl;
         return -1;
     }
-    else
-    {
-        cout << "Connected to the server." << endl;
-    }
+    // else
+    // {
+    //     cout << "Connected to the server." << endl;
+    // }
 
     // Read k (total words) and p (words per packet) from config
     int k = config["k"].asInt();
@@ -60,11 +61,13 @@ int main()
 
     string leftover_data = ""; // Buffer for leftover data between packets
 
+    chrono::time_point<chrono::steady_clock> start_time = chrono::steady_clock::now();
+
     while (true)
     {
         // Send the offset to the server
         send(client_socket, &offset, sizeof(offset), 0);
-        cout << "------------------Sent offset: " << offset << "-----------------" << endl;
+        // cout << "------------------Sent offset: " << offset << "-----------------" << endl;
 
         int words_received = 0;
 
@@ -104,7 +107,7 @@ int main()
                     }
                     if (!word.empty())
                     {
-                        cout << "Received word : " << word << endl;
+                        // cout << "Received word : " << word << endl;
                         words_received++;
                         word_count[word]++;
                     }
@@ -135,7 +138,7 @@ int main()
 
         if (eof_received)
         {
-            cout << "Received end of file. Exiting..." << endl;
+            // cout << "Received end of file. Exiting..." << endl;
             offset = -1;
             send(client_socket, &offset, sizeof(offset), 0);
             break;
@@ -144,11 +147,17 @@ int main()
         offset += k; // Adjust offset for next batch
     }
 
-    cout << "Word count:" << word_count.size() << endl;
-    for (auto it : word_count)
-    {
-        cout << it.first << ", " << it.second << endl;
-    }
+    chrono::time_point<chrono::steady_clock> end_time = chrono::steady_clock::now();
+    chrono::duration<double> elapsed_time = chrono::duration_cast<chrono::duration<double>>(end_time - start_time);
+    ofstream time_file("time.txt", ios::app);
+    time_file << elapsed_time.count() << endl;
+    time_file.close();
+
+    // cout << "Word count:" << word_count.size() << endl;
+    // for (auto it : word_count)
+    // {
+    //     cout << it.first << ", " << it.second << endl;
+    // }
 
     // Close the connection
     close(client_socket);

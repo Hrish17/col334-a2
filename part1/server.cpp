@@ -34,14 +34,14 @@ int main()
     int server_ip_address = inet_addr(config["server_ip"].asCString());
     int server_port = config["server_port"].asInt();
 
-    cout << "Server IP: " << server_ip_address << endl;
-    cout << "Server Port: " << server_port << endl;
+    // cout << "Server IP: " << server_ip_address << endl;
+    // cout << "Server Port: " << server_port << endl;
 
     // server_address.sin_addr.s_addr = INADDR_ANY;
     server_address.sin_addr.s_addr = server_ip_address;
     server_address.sin_port = htons(server_port);
 
-    cout << "Server IP: " << server_address.sin_addr.s_addr << endl;
+    // cout << "Server IP: " << server_address.sin_addr.s_addr << endl;
 
     // bind the socket to the specified IP and port
     int bind_status = bind(server_socket, (struct sockaddr *)&server_address, sizeof(server_address));
@@ -63,7 +63,7 @@ int main()
     string input_file = config["input_file"].asString();
 
     // listen for incoming connections
-    cout << "Listening for incoming connections..." << endl;
+    // cout << "Listening for incoming connections..." << endl;
 
     int listen_status = listen(server_socket, 5);
 
@@ -81,7 +81,7 @@ int main()
         }
 
         // if a connection is accepted, print the client IP and port
-        cout << "Connection accepted from " << inet_ntoa(client_address.sin_addr) << ":" << ntohs(client_address.sin_port) << endl;
+        // cout << "Connection accepted from " << inet_ntoa(client_address.sin_addr) << ":" << ntohs(client_address.sin_port) << endl;
 
         // start receiving data from the client
 
@@ -112,7 +112,7 @@ int main()
             // if client sends -1 as offset, gracefully stop the server side for this client
             if (offset == -1)
             {
-                cout << "Received termination signal from client. Closing connection..." << endl;
+                // cout << "Received termination signal from client. Closing connection..." << endl;
                 break;
             }
 
@@ -121,7 +121,7 @@ int main()
             {
                 // send special packet indicating invalid offset
                 string result = "$$\n";
-                cout << "Sending data: " << result << endl;
+                // cout << "Sending data: " << result << endl;
                 send(client_socket, result.c_str(), result.size(), 0);
                 continue; // continue to the next iteration waiting for valid requests
             }
@@ -150,7 +150,7 @@ int main()
                 }
                 result += "\n";
                 // print the result to the console
-                cout << "Sending data: " << result << endl;
+                // cout << "Sending data: " << result << endl;
                 send(client_socket, result.c_str(), result.size(), 0);
                 words_sent += p;
 
