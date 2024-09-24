@@ -15,7 +15,7 @@
 
 using namespace std;
 
-void run_aloha_client(int client_id, const string &server_ip, int server_port, int k, int p)
+void run_aloha_client(int client_id, const string &server_ip, int server_port, int k, int p, int n, int T)
 {
     // Create a TCP socket
     int client_socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -41,19 +41,37 @@ void run_aloha_client(int client_id, const string &server_ip, int server_port, i
     }
     cout << "Client " << client_id << ": Connected to the server." << endl;
 
-    int offset = 0;
+    int offset = 1;
     map<string, int> word_count;
     string leftover_data = "";
+
+    double prob = 1.0 / (double)n;
 
     while (true)
     {
         // Send the offset to the server
-        send(client_socket, &offset, sizeof(offset), 0);
-        cout << "Client " << client_id << ": Sent offset: " << offset << endl;
+        string offset_str = to_string(offset) + "\n"; // Convert integer to string with newline
+        // select a random number between 0 and 1
+        double random_number = (double)rand() / RAND_MAX;
+        // if current time (in milliseconds) is not a multiple of T, then continue
+        int64_t current_time = chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch()).count();
+        if (random_number > prob || (current_time % T) != 0)
+        {
+            continue;
+        }
+        int send_status = send(client_socket, offset_str.c_str(), offset_str.size(), 0);
+        if (send_status == -1)
+        {
+            cerr << "Failed to send offset to the server." << endl;
+        }
+
+        cout << "Client " << client_id << ": Sent offset: " << offset_str << endl;
 
         int words_received = 0;
         bool eof_received = false;
 
+        vector<string> words;
+        bool huh_received = false;
         while (words_received < k)
         {
             char buffer[1024] = {0};
@@ -65,33 +83,42 @@ void run_aloha_client(int client_id, const string &server_ip, int server_port, i
                 break;
             }
 
+            // check if the server has send "HUH!\n" message
+            if (strcmp(buffer, "HUH!\n") == 0)
+            {
+                cout << "Client " << client_id << ": Received HUH! message. Resending offset." << endl;
+                huh_received = true;
+                break;
+            }
+
             string data = leftover_data + string(buffer, bytes_received);
             leftover_data = "";
 
             size_t pos = 0;
             while ((pos = data.find('\n')) != string::npos)
             {
-                string line = data.substr(0, pos);
+                string word = data.substr(0, pos);
                 data.erase(0, pos + 1);
 
-                if (line == "EOF" || line == "$$")
+                if (word == "EOF" || word == "$$")
                 {
                     eof_received = true;
                     break;
                 }
 
-                size_t word_pos = 0;
-                while ((word_pos = line.find(',')) != string::npos)
+                // size_t word_pos = 0;
+                // while ((word_pos = line.find(',')) != string::npos)
+                // {
+
+                // }
+                cout << "Client " << client_id << ": Received word: " << word << endl;
+                // string word = line.substr(0, word_pos);
+                if (!word.empty())
                 {
-                    cout << "Client " << client_id << ": Received word: " << line.substr(0, word_pos) << endl;
-                    string word = line.substr(0, word_pos);
-                    if (!word.empty())
-                    {
-                        words_received++;
-                        word_count[word]++;
-                    }
-                    line.erase(0, word_pos + 1);
+                    words_received++;
+                    words.push_back(word);
                 }
+                // line.erase(0, pos + 1);
             }
 
             leftover_data = data;
@@ -102,11 +129,23 @@ void run_aloha_client(int client_id, const string &server_ip, int server_port, i
             }
         }
 
+        if (!huh_received)
+        {
+            for (const auto &word : words)
+            {
+                word_count[word]++;
+            }
+        }
+        else
+        {
+            continue;
+        }
+
         if (eof_received)
         {
             cout << "Client " << client_id << ": Received EOF. Closing connection." << endl;
-            offset = -1;
-            send(client_socket, &offset, sizeof(offset), 0);
+            offset_str = "-1\n";
+            send(client_socket, offset_str.c_str(), offset_str.size(), 0);
             break;
         }
 
@@ -122,18 +161,18 @@ void run_aloha_client(int client_id, const string &server_ip, int server_port, i
     close(client_socket);
 }
 
-void run_beb_client(int client_id, const string &server_ip, int server_port, int k, int p)
+void run_beb_client(int client_id, const string &server_ip, int server_port, int k, int p, int T)
 {
-    // Create a TCP socket
+    // Create a socket for the client
     int client_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (client_socket == -1)
     {
-        cerr << "Client " << client_id << ": Failed to create a socket. Exiting..." << endl;
+        cerr << "Client " << client_id << ": Failed to create socket. Exiting..." << endl;
         return;
     }
 
-    // Specify the address and port of the server
-    struct sockaddr_in server_address;
+    // Server address
+    sockaddr_in server_address;
     server_address.sin_family = AF_INET;
     server_address.sin_addr.s_addr = inet_addr(server_ip.c_str());
     server_address.sin_port = htons(server_port);
@@ -148,25 +187,34 @@ void run_beb_client(int client_id, const string &server_ip, int server_port, int
     }
     cout << "Client " << client_id << ": Connected to the server." << endl;
 
-    int offset = 0;
+    int offset = 1;
+    int time_to_send = 0;
+    int attempt = 1;
+    int last_collision_time = 0;
     map<string, int> word_count;
     string leftover_data = "";
 
-    // Define the backoff parameters
-    const int MAX_ATTEMPTS = 10;
-    const int SLOT_DURATION = 100; // Example slot duration in milliseconds
-    random_device rd;
-    mt19937 generator(rd());
-    uniform_int_distribution<> distribution(0, 1);
-
     while (true)
     {
-        // Send the offset to the server
-        send(client_socket, &offset, sizeof(offset), 0);
+        string offset_str = to_string(offset) + "\n";
+        // current time in milliseconds
+        int64_t current_time = chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch()).count();
+        if (current_time % T != 0 || (current_time - last_collision_time) < time_to_send)
+        {
+            continue;
+        }
+
+        int send_status = send(client_socket, offset_str.c_str(), offset_str.size(), 0);
+        if (send_status == -1) {
+            cerr << "Failed to send offset to the server." << endl;
+        }
         cout << "Client " << client_id << ": Sent offset: " << offset << endl;
 
         int words_received = 0;
+        bool huh_received = false;
         bool eof_received = false;
+
+        vector<string> words;
 
         while (words_received < k)
         {
@@ -174,8 +222,20 @@ void run_beb_client(int client_id, const string &server_ip, int server_port, int
             int bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
             if (bytes_received <= 0)
             {
-                cerr << "Client " << client_id << ": Failed to receive data from the server or server closed connection." << endl;
+                cerr << "Client " << client_id << ": Failed to receive data from the server." << endl;
                 eof_received = true;
+                break;
+            }
+
+            if (strcmp(buffer, "HUH!\n") == 0)
+            {
+                cout << "Client " << client_id << ": Received HUH! message. Resending offset." << endl;
+                huh_received = true;
+                attempt++;
+                // randomly choose a number [0, 2^(attempt) - 1]
+                int rand_num = rand() % (1 << attempt);
+                last_collision_time = chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch()).count();
+                time_to_send = rand_num * T;
                 break;
             }
 
@@ -186,25 +246,19 @@ void run_beb_client(int client_id, const string &server_ip, int server_port, int
             while ((pos = data.find('\n')) != string::npos)
             {
                 cout << "Client " << client_id << ": Received data: " << data.substr(0, pos) << endl;
-                string line = data.substr(0, pos);
+                string word = data.substr(0, pos);
                 data.erase(0, pos + 1);
 
-                if (line == "EOF" || line == "$$")
+                if (word == "EOF" || word == "$$")
                 {
                     eof_received = true;
                     break;
                 }
 
-                size_t word_pos = 0;
-                while ((word_pos = line.find(',')) != string::npos)
+                if (!word.empty())
                 {
-                    string word = line.substr(0, word_pos);
-                    if (!word.empty())
-                    {
-                        words_received++;
-                        word_count[word]++;
-                    }
-                    line.erase(0, word_pos + 1);
+                    words_received++;
+                    words.push_back(word);
                 }
             }
 
@@ -216,27 +270,29 @@ void run_beb_client(int client_id, const string &server_ip, int server_port, int
             }
         }
 
+        if (!huh_received)
+        {
+            for (const auto &word : words)
+            {
+                word_count[word]++;
+            }
+            attempt = 1;
+            time_to_send = 0;
+        }
+        else
+        {
+            continue;
+        }
+
         if (eof_received)
         {
             cout << "Client " << client_id << ": Received EOF. Closing connection." << endl;
-            offset = -1;
-            send(client_socket, &offset, sizeof(offset), 0);
+            offset_str = "-1\n";
+            send(client_socket, offset_str.c_str(), offset_str.size(), 0);
             break;
         }
 
         offset += k;
-
-        // Simulate backoff with random delay
-        int attempts = 0;
-        while (attempts < MAX_ATTEMPTS)
-        {
-            this_thread::sleep_for(chrono::milliseconds(SLOT_DURATION * (1 << attempts)));
-            attempts++;
-            if (distribution(generator) == 1)
-            {
-                break; // Retry
-            }
-        }
     }
 
     cout << "Client " << client_id << ": Word count:" << endl;
@@ -248,18 +304,17 @@ void run_beb_client(int client_id, const string &server_ip, int server_port, int
     close(client_socket);
 }
 
-void run_sensing_client(int client_id, const string &server_ip, int server_port, int k, int p)
+void run_sensing_client(int client_id, const string &server_ip, int server_port, int k, int p, int T)
 {
-    // Create a TCP socket
     int client_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (client_socket == -1)
     {
-        cerr << "Client " << client_id << ": Failed to create a socket. Exiting..." << endl;
+        cerr << "Client " << client_id << ": Failed to create socket. Exiting..." << endl;
         return;
     }
 
-    // Specify the address and port of the server
-    struct sockaddr_in server_address;
+    // Server address
+    sockaddr_in server_address;
     server_address.sin_family = AF_INET;
     server_address.sin_addr.s_addr = inet_addr(server_ip.c_str());
     server_address.sin_port = htons(server_port);
@@ -274,97 +329,136 @@ void run_sensing_client(int client_id, const string &server_ip, int server_port,
     }
     cout << "Client " << client_id << ": Connected to the server." << endl;
 
-    int offset = 0;
+    int offset = 1;
+    int time_to_send = 0;
+    int attempt = 1;
+    int last_collision_time = 0;
     map<string, int> word_count;
     string leftover_data = "";
-
-    // Define control message handling
-    const int POLL_INTERVAL = 100; // Polling interval in milliseconds
+    bool is_idle = false;
 
     while (true)
     {
-        // Send control message to check if server is busy
-        send(client_socket, "BUSY?\n", 6, 0);
-        char response[1024] = {0};
-        int bytes_received = recv(client_socket, response, sizeof(response) - 1, 0);
-        if (bytes_received <= 0)
+        if(!is_idle){
+            string msg = "BUSY?\n";
+            send(client_socket, msg.c_str(), msg.size(), 0);
+            char buffer[1024] = {0};
+            int bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+            if (bytes_received <= 0)
+            {
+                cerr << "Client " << client_id << ": Failed to receive data from the server." << endl;
+                break;
+            }
+            if (strcmp(buffer, "BUSY!\n") == 0)
+            {
+                cout << "Client " << client_id << ": Server is busy. Waiting..." << endl;
+                continue;
+            }
+            else if (strcmp(buffer, "IDLE!\n") == 0)
+            {
+                cout << "Client " << client_id << ": Server is idle. Sending offset." << endl;
+                is_idle = true;
+            }
+            cout << "Client " << client_id << ": Received data: " << buffer << endl;
+            continue;
+        }
+        string offset_str = to_string(offset) + "\n";
+        // current time in milliseconds
+        int64_t current_time = chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch()).count();
+        if (current_time % T != 0 || (current_time - last_collision_time) < time_to_send)
         {
-            cerr << "Client " << client_id << ": Failed to receive response from the server." << endl;
-            break;
+            continue;
         }
 
-        string server_response(response);
-        if (server_response.find("IDLE") != string::npos)
+        int send_status = send(client_socket, offset_str.c_str(), offset_str.size(), 0);
+        if (send_status == -1) {
+            cerr << "Failed to send offset to the server." << endl;
+        }
+        cout << "Client " << client_id << ": Sent offset: " << offset << endl;
+
+        int words_received = 0;
+        bool huh_received = false;
+        bool eof_received = false;
+
+        vector<string> words;
+
+        while (words_received < k)
         {
-            // Send the offset to the server
-            send(client_socket, &offset, sizeof(offset), 0);
-            cout << "Client " << client_id << ": Sent offset: " << offset << endl;
-
-            int words_received = 0;
-            bool eof_received = false;
-
-            while (words_received < k)
+            char buffer[1024] = {0};
+            int bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+            if (bytes_received <= 0)
             {
-                char buffer[1024] = {0};
-                int bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
-                if (bytes_received <= 0)
+                cerr << "Client " << client_id << ": Failed to receive data from the server." << endl;
+                eof_received = true;
+                break;
+            }
+
+            if (strcmp(buffer, "HUH!\n") == 0)
+            {
+                cout << "Client " << client_id << ": Received HUH! message. Resending offset." << endl;
+                huh_received = true;
+                attempt++;
+                last_collision_time = chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch()).count();
+                // randomly choose a number [0, 2^(attempt) - 1]
+                int rand_num = rand() % (1 << attempt);
+                time_to_send = rand_num * T;
+                break;
+            }
+
+            string data = leftover_data + string(buffer, bytes_received);
+            leftover_data = "";
+
+            size_t pos = 0;
+            while ((pos = data.find('\n')) != string::npos)
+            {
+                cout << "Client " << client_id << ": Received data: " << data.substr(0, pos) << endl;
+                string word = data.substr(0, pos);
+                data.erase(0, pos + 1);
+
+                if (word == "EOF" || word == "$$")
                 {
-                    cerr << "Client " << client_id << ": Failed to receive data from the server or server closed connection." << endl;
                     eof_received = true;
                     break;
                 }
 
-                string data = leftover_data + string(buffer, bytes_received);
-                leftover_data = "";
-
-                size_t pos = 0;
-                while ((pos = data.find('\n')) != string::npos)
+                if (!word.empty())
                 {
-                    cout << "Client " << client_id << ": Received data: " << data.substr(0, pos) << endl;
-                    string line = data.substr(0, pos);
-                    data.erase(0, pos + 1);
-
-                    if (line == "EOF" || line == "$$")
-                    {
-                        eof_received = true;
-                        break;
-                    }
-
-                    size_t word_pos = 0;
-                    while ((word_pos = line.find(',')) != string::npos)
-                    {
-                        string word = line.substr(0, word_pos);
-                        if (!word.empty())
-                        {
-                            words_received++;
-                            word_count[word]++;
-                        }
-                        line.erase(0, word_pos + 1);
-                    }
-                }
-
-                leftover_data = data;
-
-                if (eof_received)
-                {
-                    break;
+                    words_received++;
+                    words.push_back(word);
                 }
             }
+
+            leftover_data = data;
 
             if (eof_received)
             {
-                cout << "Client " << client_id << ": Received EOF. Closing connection." << endl;
-                offset = -1;
-                send(client_socket, &offset, sizeof(offset), 0);
                 break;
             }
+        }
 
-            offset += k;
+        if (!huh_received)
+        {
+            for (const auto &word : words)
+            {
+                word_count[word]++;
+            }
+            attempt = 1;
+            time_to_send = 0;
         }
         else
         {
-            this_thread::sleep_for(chrono::milliseconds(POLL_INTERVAL));
+            continue;
         }
+
+        if (eof_received)
+        {
+            cout << "Client " << client_id << ": Received EOF. Closing connection." << endl;
+            offset_str = "-1\n";
+            send(client_socket, offset_str.c_str(), offset_str.size(), 0);
+            break;
+        }
+
+        offset += k;
     }
 
     cout << "Client " << client_id << ": Word count:" << endl;
@@ -375,6 +469,7 @@ void run_sensing_client(int client_id, const string &server_ip, int server_port,
 
     close(client_socket);
 }
+
 
 int main(int argc, char *argv[])
 {
@@ -402,22 +497,25 @@ int main(int argc, char *argv[])
     int server_port = config["server_port"].asInt();
     int k = config["k"].asInt();
     int p = config["p"].asInt();
+    int T = config["T"].asInt();
+
+    int num_clients = config["num_clients"].asInt();
 
     vector<thread> client_threads;
 
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < num_clients; ++i)
     {
         if (protocol == "aloha")
         {
-            client_threads.emplace_back(run_aloha_client, i, server_ip, server_port, k, p);
+            client_threads.emplace_back(run_aloha_client, i, server_ip, server_port, k, p, num_clients, T);
         }
         else if (protocol == "beb")
         {
-            client_threads.emplace_back(run_beb_client, i, server_ip, server_port, k, p);
+            client_threads.emplace_back(run_beb_client, i, server_ip, server_port, k, p, T);
         }
         else if (protocol == "sensing")
         {
-            client_threads.emplace_back(run_sensing_client, i, server_ip, server_port, k, p);
+            client_threads.emplace_back(run_sensing_client, i, server_ip, server_port, k, p, T);
         }
         else
         {
@@ -428,7 +526,10 @@ int main(int argc, char *argv[])
 
     for (auto &t : client_threads)
     {
-        t.join();
+        if (t.joinable())
+        {
+            t.join();
+        }
     }
 
     return 0;

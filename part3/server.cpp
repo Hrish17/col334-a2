@@ -11,7 +11,6 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <chrono>
-#include <random>
 
 using namespace std;
 
@@ -24,34 +23,62 @@ void handle_client(int client_socket, vector<string> words, int k, int p, string
 {
     while (true)
     {
+        char buffer[1024];                                                    // Create a buffer large enough to hold incoming data
+        int recv_status = recv(client_socket, buffer, sizeof(buffer) - 1, 0); // Leave space for null-terminator
         int offset;
-        // Receive the offset from the client
-        int recv_status = recv(client_socket, &offset, sizeof(offset), 0);
-        if (recv_status <= 0)
+        string message;
+        if (recv_status > 0)
         {
-            cerr << "Client disconnected or recv failed. Exiting..." << endl;
-            break;
-        }
+            buffer[recv_status] = '\0'; // Null-terminate the received string
+            string received_str(buffer);
 
-        // If client sends -1 as offset, gracefully stop the server side for this client
-        if (offset == -1)
-        {
-            cout << "Received termination signal from client. Closing connection..." << endl;
-            break;
+            // Remove the newline character if present
+            if (received_str.back() == '\n')
+            {
+                received_str.pop_back();
+            }
+
+            // Convert the string back to an integer
+            if (received_str != "BUSY?")
+            {
+                cout << "Received data: " << received_str << " from client " << client_socket << endl;
+                cout << "Received offset: " << received_str << endl;
+                offset = stoi(received_str);
+            }
+            else
+            {
+                message = received_str;
+                offset = -1;
+            }
+
+            cout << "Received offset: " << offset << endl;
         }
+        else if (recv_status == 0)
+        {
+            cerr << "Client disconnected." << endl;
+        }
+        else
+        {
+            cerr << "Error receiving data: " << strerror(errno) << endl;
+        }
+        // Store the arrival time of the message
+        auto arrival_time = chrono::steady_clock::now();
+
+        // Parse the offset (assuming the client sends an integer as a string)
 
         // Protocol behavior: Check for concurrency (Grumpy Server behavior)
         lock_guard<mutex> lock(server_mutex);
-        if (server_busy && busy_socket != client_socket)
+        if ((server_busy && busy_socket != client_socket) || (arrival_time <= last_collision_time))
         {
-            if (protocol == "aloha" || protocol == "beb")
+            last_collision_time = chrono::steady_clock::now();
+            if (protocol == "aloha" || protocol == "beb" || (protocol == "sensing" && message != "BUSY?\n"))
             {
                 string huh_msg = "HUH!\n";
                 send(client_socket, huh_msg.c_str(), huh_msg.size(), 0);
                 cout << "Sent HUH! to client " << client_socket << endl;
                 continue;
             }
-            if (protocol == "sensing")
+            if (protocol == "sensing" && message == "BUSY?\n")
             {
                 string busy_msg = "BUSY\n";
                 send(client_socket, busy_msg.c_str(), busy_msg.size(), 0);
@@ -59,13 +86,18 @@ void handle_client(int client_socket, vector<string> words, int k, int p, string
                 continue;
             }
         }
+        else if (!server_busy && protocol == "sensing" && message == "BUSY?/n"){
+            string busy_msg = "IDLE/n";
+            send(client_socket, busy_msg.c_str(), busy_msg.size(), 0);
+            cout << "Sent IDLE to client " << client_socket << endl;
+        }
 
         // Mark the server as busy
         server_busy = true;
         busy_socket = client_socket;
 
         // Check if the offset is valid
-        if (offset >= words.size())
+        if (offset < 0 || offset >= words.size())
         {
             string result = "$$\n";
             send(client_socket, result.c_str(), result.size(), 0);
@@ -78,7 +110,6 @@ void handle_client(int client_socket, vector<string> words, int k, int p, string
         {
             string result = "";
             bool eof = false;
-            cout << "Words sent : " << words_sent << endl;
 
             // Send p words in a packet
             for (int i = 0; i < p; i++)
@@ -88,14 +119,14 @@ void handle_client(int client_socket, vector<string> words, int k, int p, string
                     eof = true;
                     break;
                 }
-                result += words[offset + words_sent + i] + ",";
+                result += words[offset + words_sent + i] + "\n";
             }
 
             if (eof)
             {
-                result += "EOF,";
+                result += "EOF\n";
             }
-            result += "\n";
+            // result += "\n";
             cout << "Sending data: " << result << " to client " << client_socket << endl;
             send(client_socket, result.c_str(), result.size(), 0);
             words_sent += p;
@@ -116,7 +147,7 @@ void handle_client(int client_socket, vector<string> words, int k, int p, string
 
 int main(int argc, char *argv[])
 {
-    if (argc < 2)
+    if (argc != 2)
     {
         cerr << "Usage: ./server <protocol>" << endl;
         return -1;
@@ -141,6 +172,12 @@ int main(int argc, char *argv[])
 
     // Reading configuration from config.json
     ifstream config_file("config.json");
+    if (!config_file)
+    {
+        cerr << "Failed to open config.json. Exiting..." << endl;
+        return -1;
+    }
+
     Json::Value config;
     config_file >> config;
 
@@ -159,8 +196,15 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    // Read words from the input file
     string input_file = config["input_file"].asString();
     ifstream file(input_file);
+    if (!file)
+    {
+        cerr << "Failed to open input file. Exiting..." << endl;
+        return -1;
+    }
+
     vector<string> words;
     string word;
     while (getline(file, word, ','))
@@ -169,7 +213,12 @@ int main(int argc, char *argv[])
     }
 
     cout << "Listening for incoming connections with protocol: " << protocol << "..." << endl;
-    int listen_status = listen(server_socket, 5);
+    int listen_status = listen(server_socket, num_clients);
+    if (listen_status == -1)
+    {
+        cerr << "Failed to listen on the socket. Exiting..." << endl;
+        return -1;
+    }
 
     vector<thread> client_threads;
     for (int i = 0; i < num_clients; i++)
@@ -186,6 +235,7 @@ int main(int argc, char *argv[])
         client_threads.push_back(thread(handle_client, client_socket, words, k, p, protocol));
     }
 
+    // Join all client threads
     for (auto &t : client_threads)
     {
         if (t.joinable())
